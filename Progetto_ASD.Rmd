@@ -1,0 +1,344 @@
+---
+title: "Analisi Statistica dell'Espressione Genica Differenziale tra Pazienti Affetti da Autismo Macroencefalico e i loro Familiari non Affetti"
+subtitle: "Relazione di Biostatistica Computazionale e Bioinformatica"
+author: "Camilla Cavaliere, Alessandro Clair, Giovanni Corradini"
+affiliation: "Università di Padova"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    fig_caption: yes
+fontsize: 10pt
+---
+
+### INTRODUZIONE
+Il disturbo dello spettro autistico (ASD) è probabilmente causato da un’anomalia nello sviluppo cerebrale.
+Mutazioni rare (come quelle che causano l'alterazione delle connessioni a livello sinaptico), varianti genetiche comuni (che possono causare squilibri a livello neuronale inibitorio/eccitatorio) e certi fattori ambientali (mutazioni geniche indotte) contribuiscono al rischio di incorrere nella patologia, anche se in circa l’80% dei casi non sono note tuttora le cause che la originano. \newline
+Il nostro studio di riferimento, "Mariani J, Coppola G, Zhang P, Abyzov A et al. *FOXG1-Dependent Dysregulation of GABA/Glutamate Neuron Differentiation in Autism Spectrum Disorders*", è incentrato sulla ricerca dei fattori genetici che contribuiscono maggiormente al rischio di ASD. Questo studio si è focalizzato su individui affetti da ASD che presentano macroncefalia, ovvero una dimensione della testa superiore al 90° percentile rispetto alla misura nella popolazione normale. Questa scelta è stata motivata dal fatto che la macroencefalia è uno dei fenotipi di autismo più coerentemente replicati e perchè è relazionata al gene FOXG1 (questo gene può causare un aumento della dimensione cranica se sovraespresso e viceversa se sottoespresso), ritenuto dagli sperimentatori un gene fondamentale per la spiegazione degli squilibri neuronali che differenziano sani e malati di ASD. \newline 
+Al fine di analizzare l'espressione genica (e molto altro) gli sperimentatori hanno prelevato cellule staminali pluripotenti indotte (iPSCs), sia dai pazienti affetti da ASD scelti per lo studio che dai loro familiari sani (i controlli), successivamente coltivate in vitro fino ad ottenere cellule neuronali (organoidi) che hanno lo scopo di simulare il corredo genetico dei neuroni presenti durante la fase intermedia dello sviluppo embrionale nella corteccia cerebrale. Il nostro obiettivo è quello di trovare le principali differenze a livello di espressione genica tra sani e malati di ASD, analizzando statisticamente il trascrittoma ricavato dagli organoidi.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+
+```{r librerie utilizzate, include=FALSE}
+#install.packages("BiocManager")
+library(recount)
+library(tidyverse)
+library(SummarizedExperiment)
+library(RColorBrewer)
+library(edgeR)
+library(EDASeq)
+library(sva)
+library(limma)
+library(AnnotationHub)
+library(GenomicFeatures)
+library(org.Hs.eg.db)
+library(clusterProfiler)
+library(pathview)
+```
+
+```{r, include=FALSE}
+download_study('SRP047194')
+
+load('SRP047194/rse_gene.Rdata')
+
+rse_gene
+```
+
+### DISEGNO SPERIMENTALE
+Originariamente i pazienti affetti da ASD candidati per questa analisi erano 9, ma sono stati ridotti a 4 poichè gli sperimentatori hanno voluto analizzare solo maschi, affetti da macroencefalia e con entrambi i genitori anch'essi affetti da macroencefalia: questa scelta è stata fatta sia per conferire più stabilità all'analisi, che per poter cogliere gli effetti del FOXG1 al "netto del suo effetto macroencefalia", ovvero per poter cogliere gli effetti del gene coinvolti nella deregolazione del GABA/glutammato e non quelli legati alla dimensione cranica. 
+Infatti una delle analisi (analisi di rete genica) svolte nel nostro caso studio ha mostrato, come accennato nell'introduzione, come la differente espressione del FOXG1 influenzi la dimensione encefalica e come il FOXG1 sia coinvolto nello sviluppo del telencefalo (Hanashima et al., 2004; Martynoga et al., 2005; Xuan et al., 1995); inoltre, sempre secondo le analisi del nostro studio, è stato mostrato come il FOXG1 sia legato alla deregolazione dell'azione del GABA (principale neurotrasmettitore inibitorio, responsabile nell’attività di controllo dell’eccitabilità neuronale), una delle possibili cause dell'autismo ed "effetto" del gene che vorremmo cogliere. \newline
+Il gruppo di controllo comprende 4 padri, 3 madri e un fratello; in figura 1 vengono rappresentate le quattro famiglie: i quadrati rappresentano gli uomini, i cerchi rappresentano le donne mentre il quadrato pieno indica che l’individuo è malato. \newline
+Infine, mentre il trascrittoma delle iPSCs in stato di rosetta è stato misurato solo per alcuni soggetti, per i giorni 11 e 31 è stato analizzato il trascrittoma di tutti gli organoidi. Inoltre, probabilmente perchè gli sperimentatori volevano aumentare la precisione delle analisi, le misurazioni del trascrittoma sono state ripetute dalle 2 alle 4 volte per alcuni organoidi in alcuni giorni.
+
+```{r figs, echo=FALSE, fig.cap="\\label{fig:figs}Famiglie Analizzate",fig.align = "center"}
+knitr::include_graphics("family.PNG")
+```
+
+### TECNOLOGIA E PIATTAFORMA
+Per prima cosa sono stati presi dai pazienti dei campioni cellulari, utilizzati per produrre cellule staminali pluripotenti indotte (iPSCs), ottenute principalmente tramite metodi retrovirali. In seguito sono state create dalle 2 alle 3 linee di analisi per le singole iPSCs: alcune iPSCs non sono state prodotte al tempo 0 (in quanto probabilmente ritenute poco informative sull'espressione genica in quello stato) mentre sono state prodotte tutte, da 1 a 4 volte, per essere analizzate dopo 11 e dopo 31 giorni dalla loro "nascita". \newline
+Successivamente queste iPSCs sono state coltivate in vitro fino ad ottenere cellule neuronali (organoidi) che hanno lo scopo di simulare il corredo genetico dei neuroni presenti durante la fase intermedia dello sviluppo embrionale nella corteccia cerebrale. Inoltre sono state effettuate parecchie analisi all'interno del nostro articolo di riferimento che affermano che tutti gli organoidi preparati dagli sperimentatori simulano correttamente le caratteristiche genetiche dei neuroni del campione di riferimento. \newline
+In seguito, dopo aver amplificato il DNA tramite la PCR, è stata effettuata l'analisi di dati di RNA-seq  contenuto nelle cellule dei vari organoidi (ai giorni 0, 11 e 31). In questa analisi è stato usato Tophat (Langmead et al., 2009) per mappare le reads dal genoma umano (hg19) all'annotazione transcrittomica GencodeV7 (Harrow et al., 2006); poi le reads (allineate) in formato BAM sono state convertite in formato SAM, grazie a SAMtools (Li et al., 2009).
+
+### PREPROCESSAMENTO DEI DATI
+I dati, già appartenenti alla classe SummarizedExperiment, sono stati scaricati utilizzando la libreria recount di Bioconductor. La matrice dei conteggi delle reads contiene 58037 geni misurati su 48 campioni. \newline
+Per prima cosa abbiamo eliminato tutte le variabili riferite ai campioni contenute nei "colData" del summarized experiment, eccetto le "characteristics", in quanto ritenute superflue per le nostre analisi. Delle variabili ricavate dalle "characteristics" (mediante la funzione "geocharacteristics" di "recount") abbiamo tenuto solo quelle ritenute utili per le nostre analisi, ovvero: il genere, l'Id (fattore con 12 modalità), il giorno della rilevazione (0-11-31) e lo stato di salute (sano/malato).
+Successivamente abbiamo rimosso i geni (32511) che non hanno il nome in formato "SYMBOL": questo è stato fatto perché ritenuti geni non funzionali e perché, data l’assenza del nome, non sarebbero stati utili per l'interpretazione finale dei risultati. \newline
+In seguito abbiamo eliminato dal dataset le osservazioni del giorno 0 poiché sono solo 6 (non coinvolgono tutti i campioni) e poiché abbiamo dedotto dal nostro caso studio che un embrione a quello stadio non fosse sufficientemente maturo da poter evidenziare delle differenze interessanti tra sani e malati. Inoltre abbiamo deciso di non includere nelle analisi la persona con l’Id ’03-04’ (unico fratello), per poter confrontare direttamente figlio malato con genitori sani.
+Dato che nella matrice dei conteggi sono presenti, per lo stesso soggetto, più misurazioni relative allo stesso giorno, abbiamo deciso di accorparle utilizzando la media troncata all’intero più vicino.
+Come ultima operazione sono stati scartati i geni poco espressi (1867), ovvero i geni il cui numero medio di reads sequenziate per campione è minore di 10: questa operazione di filtraggio avrebbe in  ogni caso filtrato quasi tutti i geni privi di nome in formato "SYMBOL", già filtrati in precedenza, in quanto non espressi (confermando l'ipotesi che l'assenza del nome in formato "SYMBOL" di un gene indicasse la sua non funzionalità).
+Il dataset dopo le operazioni di controllo qualità e filtraggio conta 23659 geni osservati ai giorni 11 e 31 per gli 11 campioni (4 figli malati, 4 padri e 3 madri sani).
+
+
+```{r, include=FALSE}
+filtered <- rse_gene[unlist(lapply(!is.na(rowData(rse_gene)[,3]),mean)) == 1,]
+filtered
+```
+
+```{r, include=FALSE}
+CD <- geo_characteristics(colData(filtered))[,-c(1,3)] %>%
+  mutate(genere = as_factor(donor.s.gender)) %>%
+  mutate(d.id = as_factor(donor.id)) %>%
+  mutate(giorno =
+           as_factor(number.of.days.in.vitro.in.terminal.differentiation.conditions))
+
+CD <- CD[,4:6]
+```
+
+```{r, include=FALSE}
+SE <- cbind(CD,t(assay(filtered))) %>%
+  filter(giorno != '0') %>% 
+  filter(d.id != '03-04') %>%
+  mutate(id.day.sex = 
+           as_factor(str_c(as.character(d.id),as.character(giorno),as.character(genere),sep = '-'))) %>%         dplyr::select(-c(d.id,genere,giorno)) %>% 
+  group_by(id.day.sex) %>% summarise_all(funs(mean)) %>% 
+  group_by(id.day.sex) %>% summarise_all(funs(trunc))
+
+
+```
+
+```{r, include=FALSE}
+## creo un ID per ogni campione che contiene le informazioni
+## relative a famiglia, salute, genere e giorno e preparo
+## gli ingredienti per il nuovo SummarizedExperiment
+
+id.day <- matrix(unlist(str_split(SE$id.day.sex, pattern = '-')),
+                 nrow = 4,ncol = 22)[1:3,] %>% t() %>% as.data.frame() %>%
+          mutate(id.day = 
+                as_factor(str_c(as.character(V1),as.character(V2),
+                            as.character(V3),sep = '-'))) 
+id.day <- id.day$id.day
+
+
+assei <- SE[,-1] %>% t() %>% as.matrix()
+colnames(assei) <- id.day
+
+cd <- SE$id.day.sex %>% str_split(pattern = '-') %>% as.data.frame() %>% t() 
+rownames(cd) <- id.day
+colnames(cd) <- c('famiglia','salute','giorno','genere')
+
+cd <- as.data.frame(cd) %>%
+  mutate(salute = fct_recode(as_factor(salute), sano = '01', 
+                             sano = '02', malato = '03')) %>%
+  mutate(famiglia = as_factor(famiglia)) %>%
+  mutate(giorno = as_factor(giorno)) %>%
+  mutate(genere = as_factor(genere))
+```
+
+```{r, include=FALSE}
+## creo il nuovo SummarizedExperiment
+sum_exp <- SummarizedExperiment(assays = assei,
+                           colData = cd,
+                           rowData = rowData(filtered))
+sum_exp
+```
+
+```{r, include=FALSE}
+## filtraggio dei geni poco espressi
+sum_exp <- sum_exp[rowMeans(assay(sum_exp))>=10,]
+sum_exp
+```
+
+```{r include=FALSE}
+pal <- brewer.pal(8, "Set2")
+barplot(colSums(assay(sum_exp)),las=2)
+```
+\newpage
+
+### ANALISI ESPLORATIVA E NORMALIZZAZIONE
+il numero totale di reads mappate per ciascun campione sembra in generale non presentare differenze sostanziali tra campioni diversi. Un grafico che può essere d’aiuto nel verificare la presenza di asimmetria nel numero di reads tra i vari campioni è l'RLEplot della distribuzione dei conteggi (figura 2) :
+
+```{r,include=FALSE}
+assay(sum_exp, "counts") <- assay(sum_exp)
+assay(sum_exp, "uq") <- betweenLaneNormalization(assay(sum_exp), which="upper")
+assay(sum_exp,'tmm') <- cpm(assay(sum_exp), lib.size = calcNormFactors(assay(sum_exp), method = "TMM") * colSums(assay(sum_exp)))
+```
+```{r figs2, echo=FALSE, fig.width=7,fig.height=3.5,fig.cap="\\label{fig:figs2}Normalizzazione TMM"}
+par(mfrow=c(1,2))
+plotRLE(assay(sum_exp, 'counts'), las=2, outline=FALSE, main = 'RLE plot pre Normalization')
+plotRLE(assay(sum_exp, 'tmm'), las=2, outline=FALSE, main = 'RLE plot post TMM Normalization')
+
+```
+
+Dal primo grafico notiamo che non sembrano esserci differenze così marcate tra i conteggi 'grezzi' dei vari campioni. In ogni caso procediamo alla normalizzazione per ridurre il più possibile gli errori sistematici, così che le differenze tra misurazioni rappresentino esclusivamente le differenze biologiche tra i campioni.
+Per confrontare le diverse normalizzazioni abbiamo osservato le distribuzioni degli RLE plots e i grafici delle componenti principali.
+In base ai grafici delle diverse normalizzazioni provate (UQ, TMM, FQ, RLE), è stata scelta la normalizzazione TMM, che è sembrata la più ragionevole e quella che ha alterato il meno possibile la struttura dei dati.
+  
+```{r include=FALSE}
+assay(sum_exp, "uq") <- betweenLaneNormalization(assay(sum_exp), which="upper")
+assay(sum_exp, "fq") <- betweenLaneNormalization(assay(sum_exp), which="full")
+assay(sum_exp, "rle") <- cpm(assay(sum_exp), lib.size = calcNormFactors(assay(sum_exp), method = "RLE") * colSums(assay(sum_exp)))
+```
+```{r RLE confronto normalizz, include=FALSE}
+#grafici non inclusi nella relazione
+for(a in c("counts", "uq", "fq", "tmm", "rle")) {
+plotRLE(assay(sum_exp, a), col=pal[sum_exp$salute], las=2, outline=FALSE, main = a)
+}
+```
+
+```{r PCA confronto normalizz, include=FALSE}
+#grafici non inclusi nella relazione
+for(a in c("counts", "uq", "fq", "tmm", "rle")) {
+plotPCA(log1p(assay(sum_exp, a)), col=pal[sum_exp$salute], main = a)
+}
+```
+
+Tramite l’analisi delle componenti principali abbiamo visto che i pazienti sani da quelli malati non sono quasi per nulla discriminati, nemmeno dopo la normalizzazione (anche se la varianza spiegata dalla prima componente prinicpale è aumentata), sottolineando come l’analisi delle componenti principali non riesca a far emergere marcatamente la differenza tra i due gruppi. Ciò si intuisce anche dal fatto che le prime componenti principali (soprattutto pre normalizzazione) spiegano poco della varianza totale delle variabili originali.
+Quindi la PCA sui dati grezzi, soprattutto per la prima componente principale, dispone i campioni in base al numero di reads sequenziate senza considerare i fattori biologici a cui siamo interessati. Per la prima CP perciò stiamo valutando solo la variabilità tecnica e non quella biologica. 
+
+\newpage
+
+### BATCH EFFECT
+ Molto più interessante sembra essere la PCA relativa alle variabili in cui viene sottolineata la dipendenza dal giorno della misurazione piuttosto che lo stato di salute. Infatti sembra esserci una distinzione marcata tra i due gruppi (giorno 11 in verde e giorno 31 in rosso). Questo si può attribuire al fatto che le cellule staminali risultino chiaramente più evolute nel giorno 31 rispetto al giorno 11. L' effetto del giorno sembra incidere molto di più dello stato di salute nella variabilità dei dati; per tenere conto di ciò si potrebbe includere il giorno come covariata del modello nella fase di inferenza, però abbiamo ritenuto che avrebbe potuto sovrastare l'effetto della 'salute'. Perciò abbiamo scelto di trattare il giorno come effetto di batch e di rimuovere dai dati la variabilità dovuta ad esso tramite il modello *Combat*.
+
+```{r, include=FALSE}
+adj <- ComBat(log1p(assay(sum_exp,'tmm')), sum_exp$giorno)
+```
+
+```{r figs3, echo=FALSE, fig.width=7,fig.height=5,fig.cap="\\label{fig:figs3}Batch Effect of TMM Normalized Counts"}
+par(mfrow=c(1,2))
+plotPCA(log1p(assay(sum_exp, 'tmm')), col=pal[sum_exp$giorno], las=2, main = 'Day Pre Batch')
+plotPCA(adj, col=pal[sum_exp$giorno], las=2, main = 'Day Post Batch')
+```
+ 
+I PCA plots precedenti (Figura 3) mostrano quanto l'effetto del giorno incidesse sulla variabilità dei dati e quanto sia stato ridotto (praticamente eliminato) dopo averlo trattato come effetto di batch.
+
+\newpage
+
+### INFERENZA
+
+Per prima cosa viene creato un oggetto DGEList a partire dai dati 'aggiustati' per l'effetto di batch. In seguito, nella costruzione della matrice del disegno, sono state scelte come esplicative: la famiglia di appartenenza del paziente (fattore con 4 modalità), il genere e lo stato di salute (sano/malato), quest'ultimo di importanza primaria nelle nostre analisi. \newline Per la fase di identificazione dei geni differenzialmente espressi abbiamo optato per il modello lineare coi pesi del pacchetto *limma* in quanto dovrebbe fornire risultati più stabili con una bassa numerosità campionaria (come nel nostro caso). Perciò abbiamo utilizzato la funzione *voom* per trasformare i dati in logCPM, stimare la relazione tra media e varianza (figura 4), e calcolare i pesi per ogni osservazione. I pesi stimati vengono poi incorporati nei modelli lineari, che vengono fittati per ogni gene. Infine si calcolano le stime Bayesiane empiriche dei parametri per “schiacciare” le stime verso un valore medio, e per calcolare la t moderata.
+
+
+```{r, include=FALSE}
+dge <- calcNormFactors(DGEList(exp(adj)), method = 'none')
+```
+
+```{r,include=FALSE}
+design <- model.matrix(~salute + famiglia + genere ,data = colData(sum_exp))
+
+```
+
+```{r figs4, echo=FALSE, fig.width=7,fig.height=6,fig.cap="\\label{fig:figs4}voom: Mean−variance trend", fig.align='center'}
+v <- voom(dge, design, plot = TRUE)
+```
+
+```{r,include=FALSE}
+fit <- lmFit(v, design)
+fit <- eBayes(fit)
+top <- topTable(fit,coef = 2, number=Inf)
+```
+
+
+
+\newpage
+
+
+```{r figs5, echo=FALSE, fig.width=6,fig.height=4,fig.cap="\\label{fig:figs5}Distribuzione dei p value",fig.align='center'}
+hist(top$P.Value, breaks=20, xlab='p value', ylab = 'Frequenza', main = 'Distribuzione dei p value')
+```
+
+L’istogramma in figura 5 mostra la distribuzione dei p value relativi ai coefficienti della variabile *salute* tra i vari geni; questa sembra essere soddisfacente in quanto vediamo una differenza molto marcata tra geni differenzialmente espressi e non differenzialmente espressi. 
+
+
+```{r,include=FALSE}
+symbol <- c(rowData(sum_exp)$symbol[which(rownames(sum_exp) == rownames(head(top,5))[1] )][[1]],
+            rowData(sum_exp)$symbol[which(rownames(sum_exp) == rownames(head(top,5))[2] )][[1]],
+            rowData(sum_exp)$symbol[which(rownames(sum_exp) == rownames(head(top,5))[3] )][[1]],
+            rowData(sum_exp)$symbol[which(rownames(sum_exp) == rownames(head(top,5))[4] )][[1]],
+            rowData(sum_exp)$symbol[which(rownames(sum_exp) == rownames(head(top,5))[5] )][[1]])
+```
+
+```{r, echo=FALSE}
+table(top$adj.P.Val<=0.05)
+```
+
+```{r,echo=FALSE}
+cbind(symbol,head(top,5)[,c(1,3,5)])
+```
+
+
+
+Il modello ha identificato 1987 geni differenzialmente espressi (ad un livello di significatività del 5%) su un totale di 23659 geni.
+La tabella mostra i 5 geni più significativamente differenzialmente espressi, con i relativi: nomi in formato 'SYMBOL', valori del log fold change, valori della t moderata e valori dei p value (aggiustati secondo la procedura di Benjamini Hochberg).
+
+
+\newpage
+
+### INTERPRETAZIONE DEI RISULTATI
+Soffermandoci per ora sui primi 5 geni più significativi, abbiamo visto come il gene FOXG1 fosse il primo, anche se, come detto detto in precedenza, l'effetto FOXG1 collegato alla dimensione cerebrale è stato rimosso scegliendo tutti pazienti affetti da macroencefalia. L'elevata significatività di questo gene quindi è in linea con i risultati del nostro articolo di riferimento, nel quale FOXG1 è stato valutato come gene attivatore della deregolazione dei neuroni GABA/glutammato, ritenuti importanti nella differenziazione tra sani e malati di autismo. Inoltre i restanti 4 geni più significativi (KLHDC8A,HIP1R,POU3F3 e EXTL3) sono geni che codificano per proteine che sono coinvolte nello sviluppo cerebrale o che possono essere associate a disturbi neurali; anche i geni un po' più in basso 'in classifica' presentano, in generale, una funzione simile.
+
+
+```{r, include=FALSE}
+ens.str <- substr(rownames(sum_exp), 1, 15)
+ids <- mapIds(org.Hs.eg.db, ens.str, 'ENTREZID', 'ENSEMBL')
+
+pv <- fit$p.value[,2]
+names(pv) <- ids
+head(pv)
+
+pv <- p.adjust(pv, method = 'BH')
+```
+
+```{r, include=FALSE}
+ego <- enrichGO(gene = ids[pv <= 0.05],
+universe = ids,
+OrgDb = org.Hs.eg.db,
+ont = "BP",
+pAdjustMethod = "BH",
+pvalueCutoff = 0.05,
+qvalueCutoff = 0.05,
+readable = TRUE)
+
+
+```
+
+```{r, include=FALSE}
+tt <- fit$t[,2]
+names(tt) <- ids
+
+ego2 <- gseGO(geneList = sort(tt, decreasing = TRUE),
+              OrgDb = org.Hs.eg.db,
+              minGSSize = 100)
+
+```
+
+
+```{r figs6, fig.width=6,fig.height=3, echo=FALSE}
+dotplot(ego)
+dotplot(ego2)
+```
+
+\newpage
+
+I dotplots nella pagina precedente, ottenuti tramite il test esatto di Fisher e tramite l'approccio GSEA, entrambi riferiti alla Gene Ontology, indicano le funzioni di attivazione genica risultate più significative nel nostro modello. Questi grafici indicano che le funzioni dei geni che differenziano principalmente sani e malati di ASD riguardano la costruzione, la regolazione e la modulazione degli assoni, delle sinapsi e degli organelli deputati alle principali funzioni neuronali: per comprendere questi risultati più nello specifico sarebbero stati necessari ulteriori approfondimenti di carattere prettamente biologico.\newline
+Infine abbiamo testato il pathway KEGG "GABAergic Synapse Pathway", in quanto abbiamo visto in letteratura che vi è un legame tra FOXG1 e l'azione del GABA nella regolazione sinaptica, che come detto in precedenza è una delle possibili cause dell'ASD macroncefalico; inoltre è stato scelto questo pathway in quanto è risultato essere uno dei più significativi (testato sia tramite il test esatto di Fisher che tramite l'approccio GSEA) tra quelli di KEGG. La maggior parte dei comunicatori cellulari presenti in questo pathway (figura 6) è rossa, indice del fatto che la maggior parte dei geni coinvolti in questi comunicatori sono significativamente sovraespressi ad un livello del 5%. \newline Concludendo possiamo affermare che le nostre analisi sembrano essere riuscite a differenziare (a livello genico) adeguatamente sani e malati: la evidente sovraespressione del gene FOXG1, la sovraespressione dei vari geni che possono codificare varie proteine coinvolte nello sviluppo cerebrale o che possono essere associate a disturbi neurali e la sovraespressione della pathway della sintesi GABA sembrano indicare una relazione tra la differenza nello sviluppo cerebrale a livello embrionale tra sani e malati di ASD e le deregolazioni di neurotrasmettitori legati all'eccitabilità neuronale come il GABA.
+
+```{r, include=FALSE}
+pathview(gene.data = ids[pv<=0.05], pathway.id = "04727",species = "hsa")
+```
+
+```{r figs7, echo=FALSE, fig.width=13,fig.height=10,fig.cap="\\label{fig:figs7}GABAergic Synapse Pathway",fig.align = "center"}
+knitr::include_graphics("hsa04727.pathview.png")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
